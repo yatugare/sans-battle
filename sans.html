@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>カスタム・サンズ戦（本家仕様・判定完全同期版）</title>
+    <style>
+        body { background-color: #000; color: #fff; font-family: 'Courier New', monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; user-select: none; }
+        
+        /* ゲーム画面の親コンテナ */
+        #game-container { position: relative; width: 640px; height: 480px; border: 4px solid #fff; background-color: #000; overflow: hidden; }
+        
+        #sans { position: absolute; top: 30px; left: 285px; width: 70px; height: 80px; background: transparent; display: flex; align-items: center; justify-content: center; }
+        #sans::after { content: "💀"; font-size: 50px; }
+        
+        /* 盤面 */
+        #box { position: absolute; bottom: 40px; left: 220px; width: 200px; height: 200px; border: 5px solid #fff; box-sizing: border-box; }
+        #soul { position: absolute; width: 16px; height: 16px; background-color: #ff0000; left: 312px; top: 332px; border-radius: 2px; z-index: 10; }
+        
+        #textbox { position: absolute; top: 40px; left: 370px; background: #fff; color: #000; padding: 5px 10px; border-radius: 5px; font-weight: bold; display: none; font-size: 16px; z-index: 5; }
+        #textbox::after { content: ""; position: absolute; left: -10px; top: 10px; border-width: 5px 10px 5px 0; border-style: solid; border-color: transparent #fff transparent transparent; }
+        
+        /* ゲームオーバー画面 */
+        #gameover-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; display: none; }
+        #gameover-text { color: #f00; font-size: 48px; font-weight: bold; letter-spacing: 8px; margin-bottom: 15px; text-shadow: 0 0 10px #f00; }
+        #gameover-sub { color: #fff; font-size: 14px; }
+
+        /* デバッグ表示 */
+        #debug-indicator { position: absolute; top: 10px; left: 10px; color: #ff0000; font-size: 18px; font-weight: bold; display: none; z-index: 20; }
+
+        /* UI */
+        #ui-container { position: absolute; bottom: 5px; left: 220px; display: flex; align-items: center; font-size: 16px; font-weight: bold; }
+        #hp-text { margin-right: 10px; }
+        #hp-bar-bg { width: 100px; height: 18px; background-color: #f00; position: relative; margin-right: 10px; }
+        #hp-bar-karma { width: 100px; height: 18px; background-color: #d800ff; position: absolute; top: 0; left: 0; }
+        #hp-bar-current { width: 100px; height: 18px; background-color: #ffff00; position: absolute; top: 0; left: 0; }
+        #cyan-slow-indicator { color: #00ffff; font-size: 12px; margin-left: 10px; display: none; }
+        #kr-label { color: #d800ff; font-size: 14px; margin-left: 5px; display:none; }
+
+        /* オブジェクト */
+        .bone { position: absolute; background-color: #fff; border-radius: 2px; z-index: 2; }
+        .blaster { position: absolute; width: 50px; height: 50px; background-color: transparent; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 38px; font-weight: bold; box-sizing: border-box; z-index: 4; transform-origin: center center; }
+        
+        /* 本家風ビーム（中央基準で100%連動回転） */
+        .beam-active { 
+            position: absolute; 
+            background-color: #fff; 
+            box-shadow: 0 0 10px #fff, 0 0 25px #fff, 0 0 40px #00ffff; 
+            z-index: 3; 
+            pointer-events: none; 
+            transform-origin: center center; 
+            animation: beam-quick-fade 0.12s linear forwards;
+        }
+        @keyframes beam-quick-fade {
+            0% { transform: translate(-50%, -50%) rotate(var(--rot)) scaleX(0.2); opacity: 1; }
+            15% { transform: translate(-50%, -50%) rotate(var(--rot)) scaleX(1.1); opacity: 1; }
+            85% { transform: translate(-50%, -50%) rotate(var(--rot)) scaleX(0.9); opacity: 1; }
+            100% { transform: translate(-50%, -50%) rotate(var(--rot)) scaleX(0); opacity: 0; }
+        }
+
+        #start-btn { padding: 10px 20px; font-size: 18px; background: #000; color: #fff; border: 2px solid #fff; cursor: pointer; font-family: inherit; margin-bottom: 20px; }
+        #start-btn:hover { background: #fff; color: #000; }
+
+        /* 本家風コマンドボタン用のスタイル */
+        .cmd-btn {
+            border: 2px solid #ff9d00;
+            color: #ff9d00;
+            padding: 4px 0;
+            width: 42px;
+            font-size: 10px;
+            font-weight: bold;
+            background: #000;
+            text-align: center;
+            box-sizing: border-box;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="debug-indicator">DEBUG MODE: ACTIVE</div>
+    <button id="start-btn">Zキーかココをクリックで「いくぜ」</button>
+    
+    <div id="game-container">
+        <div id="gameover-screen">
+            <div id="gameover-text">GAME OVER</div>
+            <div id="gameover-sub">F5キーでページをリロードして再挑戦</div>
+        </div>
+
+        <div id="sans"></div>
+        <div id="textbox">いくぜ。</div>
+        <div id="box"></div>
+        <div id="soul"></div>
+        
+        <div id="ui-container">
+            <span id="hp-text">HP 92 / 92</span>
+            <div id="hp-bar-bg">
+                <div id="hp-bar-karma"></div>
+                <div id="hp-bar-current"></div>
+            </div>
+            <span id="kr-label">KR</span>
+            <span id="cyan-slow-indicator">SLOW</span>
+        </div>
+    </div>
+
+<script>
+const container = document.getElementById('game-container');
+const box = document.getElementById('box');
+const soul = document.getElementById('soul');
+const startBtn = document.getElementById('start-btn');
+const hpText = document.getElementById('hp-text');
+const hpBarCurrent = document.getElementById('hp-bar-current');
+const hpBarKarma = document.getElementById('hp-bar-karma');
+const krLabel = document.getElementById('kr-label');
+const debugIndicator = document.getElementById('debug-indicator');
+const slowIndicator = document.getElementById('cyan-slow-indicator');
+const gameoverScreen = document.getElementById('gameover-screen');
+const textbox = document.getElementById('textbox');
+
+// オーディオの追加（SAVIOR OF HUMANITY）
+const bgm = new Audio('https://ia600609.us.archive.org/24/items/undertale-ost-sans-battle-theme-savior-of-humanity/Undertale%20OST%20-%20Sans%20Battle%20Theme%20-%20SAVIOR%20OF%20HUMANITY.mp3');
+bgm.loop = true;
+bgm.volume = 0.6;
+
+// ステータス
+let maxHP = 92;
+let currentHP = 92;
+let karmaHP = 0; 
+let isDebugMode = false; 
+let isGameOver = false;
+let animationId = null;
+let activeIntervals = [];
+let frameCount = 0; // 3フレームごとの判定に使用
+
+// 骨用の通常無敵時間（ビームには適用されません）
+let lastHitTime = 0;
+const boneHitCooldown = 150; 
+
+// 座標設定
+let soulX = 312;
+let soulY = 332;
+const normalSpeed = 4; 
+const slowSpeed = 2; 
+const keys = {};
+
+const minX = 225, maxX = 400, minY = 245, maxY = 419;
+const boxCenterX = 320; 
+const boxCenterY = 340; 
+
+function setTrackedInterval(fn, delay) {
+    const id = setInterval(fn, delay);
+    activeIntervals.push(id);
+    return id;
+}
+
+window.addEventListener('keydown', e => {
+    const key = e.key.toLowerCase();
+    keys[key] = true; 
+    
+    if((key === 'z' || e.key === 'enter') && !battleStarted) startBattle();
+    
+    if (key === 'y' && keys['f'] && keys['d']) {
+        isDebugMode = !isDebugMode;
+        debugIndicator.style.display = isDebugMode ? 'block' : 'none';
+    }
+});
+
+window.addEventListener('keyup', e => { 
+    keys[e.key.toLowerCase()] = false; 
+});
+
+window.addEventListener('blur', () => {
+    for (let k in keys) keys[k] = false;
+});
+
+startBtn.addEventListener('click', startBattle);
+
+function update() {
+    if (isGameOver) return; 
+
+    const currentSpeed = (keys['x']) ? slowSpeed : normalSpeed;
+    slowIndicator.style.display = (keys['x']) ? 'inline' : 'none';
+
+    if (keys['arrowleft']) soulX -= currentSpeed;
+    if (keys['arrowright']) soulX += currentSpeed;
+    if (keys['arrowup']) soulY -= currentSpeed;
+    if (keys['arrowdown']) soulY += currentSpeed;
+
+    soulX = Math.max(minX, Math.min(maxX, soulX));
+    soulY = Math.max(minY, Math.min(maxY, soulY));
+    soul.style.left = soulX + 'px';
+    soul.style.top = soulY + 'px';
+
+    // 骨に当たった時だけチカチカさせる
+    const now = Date.now();
+    if (now - lastHitTime < boneHitCooldown && !isDebugMode) {
+        soul.style.opacity = (Math.floor(now / 30) % 2 === 0) ? '0.3' : '1';
+    } else {
+        soul.style.opacity = '1';
+    }
+
+    // 3フレームごとに当たり判定を検証する（負荷軽減＆本家風の遊び）
+    frameCount++;
+    if (!isDebugMode && frameCount % 3 === 0) {
+        checkCollision();
+    }
+    updateUI();
+    
+    animationId = requestAnimationFrame(update);
+}
+
+// カルマ減少
+setTrackedInterval(() => {
+    if (karmaHP > 0 && !isGameOver && !isDebugMode) {
+        if (currentHP > 1) {
+            currentHP--;
+            karmaHP--;
+        } else if (currentHP === 1) {
+            karmaHP--;
+        }
+    }
+}, 120);
+
+function updateUI() {
+    if (currentHP < 0) currentHP = 0;
+    const currentPct = (currentHP / maxHP) * 100;
+    const karmaPct = ((currentHP + karmaHP) / maxHP) * 100;
+    hpBarCurrent.style.width = Math.min(100, currentPct) + 'px';
+    hpBarKarma.style.width = Math.min(100, karmaPct) + 'px';
+    hpText.innerText = `HP ${currentHP} / ${maxHP}`;
+    krLabel.style.display = karmaHP > 0 ? 'inline' : 'none';
+
+    if (currentHP <= 0 && !isGameOver) {
+        triggerGameOver();
+    }
+}
+
+function triggerGameOver() {
+    isGameOver = true;
+    cancelAnimationFrame(animationId);
+    activeIntervals.forEach(id => clearInterval(id));
+    bgm.pause(); // ゲームオーバー時にBGMを停止
+    
+    hpText.innerText = `HP 0 / ${maxHP} (GAME OVER)`;
+    soul.style.backgroundColor = '#f00';
+    soul.style.opacity = '1';
+    gameoverScreen.style.display = 'flex';
+}
+
+// 見た目の回転四角形とソウルの衝突判定（OOBB方式）
+function checkCollision() {
+    if (currentHP <= 0 || isGameOver || isDebugMode) return;
+
+    const obstacles = document.querySelectorAll('.bone, .beam-active');
+    const now = Date.now();
+    
+    // ソウルの中心点と半径
+    const sx = soulX + 8;
+    const sy = soulY + 8;
+
+    obstacles.forEach(obs => {
+        if (obs.classList.contains('beam-active')) {
+            if (obs.dataset.invalid === "true") return;
+
+            // ビームの中心と設定値を取得
+            const cx = parseFloat(obs.dataset.cx);
+            const cy = parseFloat(obs.dataset.cy);
+            const angle = parseFloat(obs.dataset.angle);
+            const w = parseFloat(obs.style.width);
+            const h = parseFloat(obs.style.height);
+
+            // ソウルの座標を、ビームの回転の逆向きに回転させて「傾きのない世界」に変換する
+            const rad = -angle * Math.PI / 180;
+            const cos = Math.cos(rad);
+            const sin = Math.sin(rad);
+
+            // ビーム中心から見たソウルの相対位置
+            const dx = sx - cx;
+            const dy = sy - cy;
+
+            // 回転後のソウルの位置
+            const rx = dx * cos - dy * sin;
+            const ry = dx * sin + dy * cos;
+
+            // 傾きがゼロになった世界で、単純な長方形とソウルの四角判定を行う
+            const halfW = w / 2 + 5; // ソウルのサイズ分マージンを追加
+            const halfH = h / 2;
+
+            if (Math.abs(rx) < halfW && Math.abs(ry) < halfH) {
+                // ビームは無敵時間（cooldown）を完全に無視して毎フレームダメージ
+                hitPlayer(true); 
+            }
+        } else {
+            // 骨の判定（通常無敵時間が適用される）
+            if (now - lastHitTime < boneHitCooldown) return;
+
+            const x = parseFloat(obs.style.left);
+            const y = parseFloat(obs.style.top);
+            const w = parseFloat(obs.style.width);
+            const h = parseFloat(obs.style.height);
+            
+            if (soulX < x + w && soulX + 16 > x &&
+                soulY < y + h && soulY + 16 > y) {
+                hitPlayer(false);
+            }
+        }
+    });
+}
+
+function hitPlayer(isBeam = false) {
+    if (isGameOver || isDebugMode) return;
+    
+    if (!isBeam) {
+        lastHitTime = Date.now(); // 骨の場合のみ無敵トリガーを引く
+    }
+
+    if (currentHP > 1) {
+        currentHP -= 1; 
+        if (karmaHP < 24) karmaHP += 1; // サンズの牙
+    } else {
+        currentHP = 0;
+        karmaHP = 0;
+        updateUI();
+    }
+}
+
+animationId = requestAnimationFrame(update);
+
+let battleStarted = false;
+function startBattle() {
+    if (battleStarted || isGameOver) return;
+    battleStarted = true;
+    startBtn.style.display = 'none';
+    textbox.style.display = 'block';
+    
+    // BGMの再生を開始
+    bgm.play().catch(e => console.log("Audio playback failed:", e));
+
+    // 1.5秒：【最初の波】幅広大波正弦波ウェーブ
+    setTimeout(() => {
+        if (isGameOver) return;
+        textbox.style.display = 'none'; 
+        
+        let waveTime = 0;
+        const waveInterval = setTrackedInterval(() => {
+            if (waveTime > 4000 || isGameOver) { 
+                clearInterval(waveInterval);
+                return;
+            }
+            
+            const baseWave = Math.sin(waveTime * 0.0035) * 32; 
+            const topBoneHeight = 58 + baseWave;
+            const bottomBoneHeight = 58 - baseWave;
+
+            spawnBoneRaw(225, minY, 10, topBoneHeight, 3.2); 
+            spawnBoneRaw(225, maxY - bottomBoneHeight, 10, bottomBoneHeight, 3.2); 
+
+            spawnBoneRaw(400, minY, 10, topBoneHeight, -3.2); 
+            spawnBoneRaw(400, maxY - bottomBoneHeight, 10, bottomBoneHeight, -3.2); 
+
+            waveTime += 140; 
+        }, 140);
+
+    }, 1500);
+
+    // 7.5秒（波の終了2秒後）にガスブラ始動
+    setTimeout(() => {
+        if (isGameOver) return;
+        
+        const sniperTimer = setTrackedInterval(() => {
+            if (isGameOver) return;
+            spawnAdvancedSniperBlaster(soulX + 8, soulY + 8); 
+        }, 1600);
+
+        // 前半：時計回り
+        let angleOffset1 = 0;
+        const circleInterval1 = setTrackedInterval(() => {
+            if (isGameOver) return;
+            spawnInstantCenterBlaster(boxCenterX, boxCenterY, 135, angleOffset1, 26, 260);
+            spawnInstantCenterBlaster(boxCenterX, boxCenterY, 135, angleOffset1 + 180, 26, 260);
+            angleOffset1 += 18; 
+        }, 90);
+
+        // 7.0秒後に反時計回りに切り替え
+        setTimeout(() => {
+            if (isGameOver) return;
+            clearInterval(circleInterval1);
+
+            let angleOffset2 = 0;
+            const circleInterval2 = setTrackedInterval(() => {
+                if (isGameOver) return;
+                spawnInstantCenterBlaster(boxCenterX, boxCenterY, 135, angleOffset2, 26, 260);
+                spawnInstantCenterBlaster(boxCenterX, boxCenterY, 135, angleOffset2 + 180, 26, 260);
+                angleOffset2 -= 18; 
+            }, 90);
+
+            setTimeout(() => {
+                clearInterval(circleInterval2);
+                clearInterval(sniperTimer);
+                if (isGameOver) return;
+                
+                startAsrielChaosPhase();
+            }, 7000);
+
+        }, 7000);
+
+    }, 7500);
+}
+
+// 最終カオスフェーズ
+function startAsrielChaosPhase() {
+    if (isGameOver) return;
+    let runTime = 0;
+    let lastAngle = 0;
+
+    const asrielInterval = setTrackedInterval(() => {
+        if (runTime > 6000 || isGameOver) { 
+            clearInterval(asrielInterval);
+            // カオスフェーズの攻撃時間が終了したら、1秒後に本家のコマンド画面へ移行
+            setTimeout(() => {
+                if (!isGameOver) goToCommandPhase();
+            }, 1000);
+            return;
+        }
+
+        let randomAngle = Math.random() * 360;
+        while (Math.abs(randomAngle - lastAngle) < 45) {
+            randomAngle = Math.random() * 360;
+        }
+        lastAngle = randomAngle;
+
+        spawnInstantCenterBlaster(boxCenterX, boxCenterY, 140, randomAngle, 22, 240);
+        runTime += 80; 
+    }, 80);
+}
+
+// すべての攻撃が終わった後に呼ばれるコマンド選択画面処理（本家完全風レイアウト）
+function goToCommandPhase() {
+    box.innerHTML = `
+        <div style="padding: 15px; font-family: monospace; font-size: 13px; color: #fff; line-height: 1.8; letter-spacing: 1px;">
+            * サンズは けだるそうな目を している。<br>
+            * 諦めるな！
+        </div>
+        <div style="position: absolute; bottom: 12px; left: 0; width: 100%; display: flex; justify-content: space-around; padding: 0 5px; box-sizing: border-box;">
+            <div class="cmd-btn">たたかう</div>
+            <div class="cmd-btn">こうどう</div>
+            <div class="cmd-btn">アイテム</div>
+            <div class="cmd-btn">みのがす</div>
+        </div>
+    `;
+    
+    // ソウルを一番左の「たたかう」ボタンの左側にきれいに待機させる
+    soulX = 227;
+    soulY = 394;
+    soul.style.left = soulX + 'px';
+    soul.style.top = soulY + 'px';
+}
+
+function spawnBoneRaw(x, y, w, h, speedX) {
+    if (isGameOver) return;
+    const bone = document.createElement('div');
+    bone.className = 'bone';
+    bone.style.width = w + 'px';
+    bone.style.height = h + 'px';
+    bone.style.left = x + 'px';
+    bone.style.top = y + 'px';
+    container.appendChild(bone);
+    
+    let currentX = x;
+    const ani = setInterval(() => {
+        if (isGameOver) { clearInterval(ani); return; }
+        currentX += speedX;
+        bone.style.left = currentX + 'px';
+        
+        if (currentX < minX - 40 || currentX > maxX + 40) {
+            clearInterval(ani);
+            bone.remove();
+        }
+    }, 1000/60);
+}
+
+// ガスターブラスター発生＆CSS連動消去システム
+function spawnInstantCenterBlaster(centerX, centerY, radius, angle, targetWidth = 26, fireTiming = 260) {
+    if (isGameOver) return;
+    const gb = document.createElement('div');
+    gb.className = 'blaster';
+    gb.innerHTML = "💀";
+    
+    const rad = angle * Math.PI / 180;
+    // ブラスター（ドクロ）の位置
+    const bx = centerX + Math.cos(rad) * radius;
+    const by = centerY + Math.sin(rad) * radius;
+    
+    gb.style.left = (bx - 25) + 'px';
+    gb.style.top = (by - 25) + 'px';
+    gb.style.transform = `rotate(${angle + 270}deg)`; 
+    container.appendChild(gb);
+
+    setTimeout(() => {
+        if (isGameOver || !gb.parentNode) { gb.remove(); return; }
+        
+        const beam = document.createElement('div');
+        beam.className = 'beam-active';
+        beam.style.width = targetWidth + 'px';
+        beam.style.height = '600px'; 
+        
+        // CSSの回転アニメーションと100%シンクロさせるため、
+        // ビームの中心点を「枠の中心(boxCenter)」にして、そこを起点に回転させます。
+        beam.style.left = centerX + 'px';
+        beam.style.top = centerY + 'px';
+        
+        const beamAngle = angle + 90;
+        beam.style.setProperty('--rot', `${beamAngle}deg`);
+        
+        // 衝突判定用に中心点と見た目のデータをそのまま丸ごと引き渡す
+        beam.dataset.cx = centerX;
+        beam.dataset.cy = centerY;
+        beam.dataset.angle = beamAngle;
+        beam.dataset.invalid = "false";
+
+        // アニメーション終了時に完全消去
+        beam.addEventListener('animationend', () => {
+            beam.dataset.invalid = "true";
+            beam.remove();
+            if (gb && gb.parentNode) gb.remove();
+        });
+        
+        container.appendChild(beam);
+    }, fireTiming);
+}
+
+// スナイパー型ブラスター
+function spawnAdvancedSniperBlaster(tx, ty) {
+    if (isGameOver) return;
+    const angleToSoul = Math.atan2(ty - boxCenterY, tx - boxCenterX) * 180 / Math.PI;
+    spawnInstantCenterBlaster(boxCenterX, boxCenterY, 145, angleToSoul + 180, 26, 260);
+}
+</script>
+</body>
+</html>
